@@ -1,0 +1,836 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Angry Rabbits 🐰</title>
+
+<style>
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: Arial, sans-serif;
+  background: #172b45;
+  color: white;
+  text-align: center;
+}
+
+header {
+  padding: 12px;
+  background: #102038;
+}
+
+h1 {
+  margin: 4px 0;
+  color: #ffd34e;
+  font-size: clamp(28px, 5vw, 42px);
+}
+
+header p { margin: 5px; }
+
+#game-wrap {
+  width: min(100%, 1000px);
+  margin: 0 auto;
+  position: relative;
+}
+
+canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: #8bdcff;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+#controls {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 12px;
+}
+
+button {
+  background: #ffd34e;
+  color: #382b13;
+  border: 0;
+  border-radius: 10px;
+  padding: 11px 17px;
+  font-size: 16px;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+button:hover { background: #ffe58a; }
+button:active { transform: scale(.97); }
+
+#message {
+  position: absolute;
+  display: none;
+  top: 18%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(88%, 480px);
+  background: #fff4b8;
+  color: #633c10;
+  border: 4px solid #e9a52b;
+  border-radius: 18px;
+  padding: 18px;
+  box-shadow: 0 5px 18px #0005;
+  z-index: 2;
+}
+
+#message h2 { margin: 0 0 8px; }
+#message p { margin: 0 0 12px; line-height: 1.4; }
+
+#instructions {
+  padding: 0 12px 18px;
+  color: #d9e9ff;
+  font-size: 14px;
+}
+</style>
+</head>
+
+<body>
+<header>
+  <h1>🐰 ANGRY RABBITS 🥕</h1>
+  <p>Launch rabbits, knock down carrot towers, and defeat the hawks!</p>
+</header>
+
+<div id="game-wrap">
+  <canvas id="game" width="960" height="540"></canvas>
+
+  <div id="message">
+    <h2 id="message-title">Level Complete!</h2>
+    <p id="message-text">Amazing job!</p>
+    <button id="message-button">Next Level ➜</button>
+  </div>
+</div>
+
+<div id="controls">
+  <button id="restart">🔄 Restart Level</button>
+  <button id="next">Next Level ➜</button>
+</div>
+
+<div id="instructions">
+  Drag the rabbit backward from the slingshot and release to launch it.
+  Knock down the carrot towers and hit the flying hawks.
+</div>
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+const messageBox = document.getElementById("message");
+const messageTitle = document.getElementById("message-title");
+const messageText = document.getElementById("message-text");
+const messageButton = document.getElementById("message-button");
+
+const W = canvas.width;
+const H = canvas.height;
+const groundY = 465;
+const sling = { x: 150, y: 350 };
+
+const gravity = 0.18;
+const blockGravity = 0.20;
+
+let level = 1;
+let score = 0;
+let rabbitsLeft = 3;
+let rabbit = null;
+let carrots = [];
+let hawks = [];
+let particles = [];
+let dragging = false;
+let dragPoint = null;
+let gameOver = false;
+let levelWon = false;
+let shotsTaken = 0;
+let lastTime = 0;
+let gameTime = 0;
+let messageTimer = null;
+
+const motivationalMessages = [
+  "🐰 Great job! You're hopping your way to victory!",
+  "🥕 Amazing! You're a carrot-smashing champion!",
+  "🦅 Incredible! Nothing can stop you now!",
+  "⭐ You're a superstar! Keep going!",
+  "🏆 Fantastic! You're an Angry Rabbits legend!",
+  "🚀 You're on fire! Keep aiming for the stars!"
+];
+
+const levelLayouts = [
+  [
+    { x: 650, y: 425 }, { x: 650, y: 385 },
+    { x: 690, y: 425 }, { x: 690, y: 385 },
+    { x: 670, y: 345 }
+  ],
+  [
+    { x: 610, y: 425 }, { x: 650, y: 425 },
+    { x: 690, y: 425 }, { x: 730, y: 425 },
+    { x: 630, y: 385 }, { x: 670, y: 385 },
+    { x: 710, y: 385 }, { x: 670, y: 345 }
+  ],
+  [
+    { x: 600, y: 425 }, { x: 640, y: 425 },
+    { x: 680, y: 425 }, { x: 720, y: 425 },
+    { x: 760, y: 425 }, { x: 620, y: 385 },
+    { x: 660, y: 385 }, { x: 700, y: 385 },
+    { x: 740, y: 385 }, { x: 640, y: 345 },
+    { x: 700, y: 345 }, { x: 670, y: 305 }
+  ]
+];
+
+function makeRabbit() {
+  rabbit = {
+    x: sling.x,
+    y: sling.y,
+    vx: 0,
+    vy: 0,
+    r: 17,
+    launched: false,
+    alive: true,
+    angle: 0
+  };
+}
+
+function makeCarrots() {
+  const layout = levelLayouts[(level - 1) % levelLayouts.length];
+
+  carrots = layout.map((p, i) => ({
+    x: p.x,
+    y: p.y,
+    w: 30,
+    h: 36,
+    vx: 0,
+    vy: 0,
+    angle: 0,
+    av: 0,
+    alive: true,
+    hit: false,
+    color: i % 2 ? "#ff9c35" : "#ffb13b"
+  }));
+}
+
+function makeHawks() {
+  const count = Math.min(1 + Math.floor((level - 1) / 2), 3);
+  hawks = [];
+
+  for (let i = 0; i < count; i++) {
+    hawks.push({
+      baseX: 480 + i * 125,
+      baseY: 160 + i * 45,
+      x: 480 + i * 125,
+      y: 160 + i * 45,
+      phase: i * 2.3,
+      wingPhase: 0,
+      alive: true,
+      r: 23
+    });
+  }
+}
+
+function startLevel() {
+  clearTimeout(messageTimer);
+  messageBox.style.display = "none";
+
+  score = 0;
+  rabbitsLeft = 3;
+  shotsTaken = 0;
+  gameOver = false;
+  levelWon = false;
+  dragging = false;
+  dragPoint = null;
+  particles = [];
+
+  makeRabbit();
+  makeCarrots();
+  makeHawks();
+  updateHud();
+}
+
+function updateHud() {
+  // Level and score are drawn on the canvas.
+}
+
+function showMotivation() {
+  levelWon = true;
+  gameOver = true;
+
+  const msg = motivationalMessages[
+    Math.min(level - 1, motivationalMessages.length - 1)
+  ];
+
+  messageTitle.textContent = "🎉 LEVEL COMPLETE! 🎉";
+  messageText.textContent = msg + " Your score: " + score + " points!";
+
+  messageButton.textContent =
+    level >= 3 ? "Play Again 🐰" : "Next Level ➜";
+
+  messageBox.style.display = "block";
+}
+
+function showGameOver() {
+  gameOver = true;
+  messageTitle.textContent = "Nice Try! 🐰";
+  messageText.textContent =
+    "You ran out of rabbits. Don't give up — try a different angle!";
+  messageButton.textContent = "Try Again 🔄";
+  messageBox.style.display = "block";
+}
+
+function nextLevel() {
+  if (!levelWon && gameOver) {
+    startLevel();
+    return;
+  }
+
+  if (level >= 3) {
+    level = 1;
+  } else {
+    level++;
+  }
+
+  startLevel();
+}
+
+messageButton.addEventListener("click", nextLevel);
+
+document.getElementById("restart").addEventListener("click", startLevel);
+document.getElementById("next").addEventListener("click", nextLevel);
+
+function pointerPosition(event) {
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: (event.clientX - rect.left) * W / rect.width,
+    y: (event.clientY - rect.top) * H / rect.height
+  };
+}
+
+canvas.addEventListener("pointerdown", event => {
+  if (gameOver || !rabbit || rabbit.launched || !rabbit.alive) return;
+
+  const p = pointerPosition(event);
+  const distance = Math.hypot(p.x - rabbit.x, p.y - rabbit.y);
+
+  if (distance < 55) {
+    dragging = true;
+    dragPoint = p;
+    canvas.setPointerCapture(event.pointerId);
+  }
+});
+
+canvas.addEventListener("pointermove", event => {
+  if (!dragging || !rabbit) return;
+
+  const p = pointerPosition(event);
+  const dx = p.x - sling.x;
+  const dy = p.y - sling.y;
+  const maxPull = 85;
+  const distance = Math.hypot(dx, dy);
+  const scale = distance > maxPull ? maxPull / distance : 1;
+
+  rabbit.x = sling.x + dx * scale;
+  rabbit.y = sling.y + dy * scale;
+  dragPoint = p;
+});
+
+function releaseRabbit() {
+  if (!dragging || !rabbit || gameOver) return;
+
+  dragging = false;
+
+  const dx = sling.x - rabbit.x;
+  const dy = sling.y - rabbit.y;
+
+  if (Math.hypot(dx, dy) < 8) {
+    rabbit.x = sling.x;
+    rabbit.y = sling.y;
+    return;
+  }
+
+  rabbit.vx = dx * 0.19;
+  rabbit.vy = dy * 0.19;
+  rabbit.launched = true;
+  shotsTaken++;
+  rabbitsLeft--;
+}
+
+canvas.addEventListener("pointerup", releaseRabbit);
+canvas.addEventListener("pointercancel", releaseRabbit);
+
+function circleRectCollision(cx, cy, r, rect) {
+  const closestX = Math.max(rect.x, Math.min(cx, rect.x + rect.w));
+  const closestY = Math.max(rect.y, Math.min(cy, rect.y + rect.h));
+  return Math.hypot(cx - closestX, cy - closestY) < r;
+}
+
+function burst(x, y, color, amount = 8) {
+  for (let i = 0; i < amount; i++) {
+    particles.push({
+      x, y,
+      vx: (Math.random() - 0.5) * 5,
+      vy: (Math.random() - 1) * 4,
+      life: 35 + Math.random() * 20,
+      color
+    });
+  }
+}
+
+function update(dt) {
+  if (gameOver) return;
+
+  const step = Math.min(dt / 16.67, 2);
+  gameTime += dt / 1000;
+
+  // Rabbit flight
+  if (rabbit && rabbit.launched && rabbit.alive) {
+    rabbit.vy += gravity * step;
+    rabbit.x += rabbit.vx * step;
+    rabbit.y += rabbit.vy * step;
+    rabbit.angle = Math.atan2(rabbit.vy, rabbit.vx);
+
+    if (rabbit.x > W + 60 || rabbit.x < -60 ||
+        rabbit.y > H + 60) {
+      rabbit.alive = false;
+    }
+
+    // Hit carrot blocks
+    for (const c of carrots) {
+      if (!c.alive) continue;
+
+      if (circleRectCollision(rabbit.x, rabbit.y, rabbit.r, c)) {
+        c.hit = true;
+        c.vx += rabbit.vx * 0.22;
+        c.vy += rabbit.vy * 0.22;
+        c.av += (Math.random() - 0.5) * 0.12;
+        c.alive = false;
+
+        score += 100;
+        burst(c.x + c.w / 2, c.y + c.h / 2, "#ffad36");
+
+        rabbit.vx *= 0.72;
+        rabbit.vy *= 0.72;
+      }
+    }
+
+    // Hit flying hawks
+    for (const h of hawks) {
+      if (!h.alive) continue;
+
+      if (Math.hypot(rabbit.x - h.x, rabbit.y - h.y) <
+          rabbit.r + h.r) {
+        h.alive = false;
+        score += 250;
+        burst(h.x, h.y, "#fff1a8", 16);
+        rabbit.vx *= 0.75;
+        rabbit.vy *= 0.75;
+      }
+    }
+
+    // Stop the rabbit when it reaches the ground
+    if (rabbit.y + rabbit.r >= groundY) {
+      rabbit.y = groundY - rabbit.r;
+      rabbit.vy *= -0.22;
+      rabbit.vx *= 0.65;
+
+      if (Math.abs(rabbit.vx) < 0.6) {
+        rabbit.alive = false;
+      }
+    }
+  }
+
+  // Carrot blocks fall, tumble, and slide
+  for (const c of carrots) {
+    if (!c.alive) continue;
+
+    c.vy += blockGravity * step;
+    c.x += c.vx * step;
+    c.y += c.vy * step;
+    c.angle += c.av * step;
+
+    c.vx *= Math.pow(0.992, step);
+    c.av *= Math.pow(0.99, step);
+
+    if (c.y + c.h >= groundY) {
+      c.y = groundY - c.h;
+      c.vy *= -0.18;
+      c.vx *= 0.84;
+      c.av *= 0.7;
+
+      if (Math.abs(c.vy) < 0.7) c.vy = 0;
+    }
+
+    // Blocks can knock other blocks away
+    for (const other of carrots) {
+      if (other === c || !other.alive) continue;
+
+      const overlapX =
+        c.x < other.x + other.w &&
+        c.x + c.w > other.x;
+      const overlapY =
+        c.y < other.y + other.h &&
+        c.y + c.h > other.y;
+
+      if (overlapX && overlapY) {
+        other.vx += c.vx * 0.35 + (c.x - other.x) * 0.015;
+        other.vy -= 0.7;
+        c.vx *= 0.8;
+      }
+    }
+
+    if (c.x < -100 || c.x > W + 100 || c.y > H + 100) {
+      c.alive = false;
+      score += 50;
+    }
+  }
+
+  // Flying hawks move like birds
+  for (const h of hawks) {
+    if (!h.alive) continue;
+
+    h.x = h.baseX + Math.sin(gameTime * 0.55 + h.phase) * 35;
+    h.y = h.baseY + Math.sin(gameTime * 0.9 + h.phase) * 16;
+    h.wingPhase = gameTime * 12 + h.phase;
+  }
+
+  // Particles
+  for (const p of particles) {
+    p.x += p.vx * step;
+    p.y += p.vy * step;
+    p.vy += 0.08 * step;
+    p.life -= step;
+  }
+
+  particles = particles.filter(p => p.life > 0);
+
+  // Win when all carrot blocks are knocked away
+  if (carrots.every(c => !c.alive)) {
+    showMotivation();
+    return;
+  }
+
+  // Prepare another rabbit after the previous one stops
+  if (rabbit && rabbit.launched && !rabbit.alive && rabbitsLeft > 0) {
+    makeRabbit();
+  }
+
+  if (rabbit && rabbit.launched && !rabbit.alive &&
+      rabbitsLeft <= 0 && !carrots.every(c => !c.alive)) {
+    showGameOver();
+  }
+}
+
+function drawBackground() {
+  const sky = ctx.createLinearGradient(0, 0, 0, H);
+  sky.addColorStop(0, "#76d5ff");
+  sky.addColorStop(1, "#e0f8ff");
+
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, W, H);
+
+  // Sun
+  ctx.fillStyle = "#fff2a1";
+  ctx.beginPath();
+  ctx.arc(820, 85, 38, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Clouds
+  drawCloud(250, 90, 1);
+  drawCloud(520, 70, 0.7);
+  drawCloud(720, 190, 0.8);
+
+  // Hills
+  ctx.fillStyle = "#9cdb86";
+  ctx.beginPath();
+  ctx.moveTo(0, 390);
+  ctx.quadraticCurveTo(250, 300, 450, 400);
+  ctx.quadraticCurveTo(700, 300, 960, 390);
+  ctx.lineTo(960, groundY);
+  ctx.lineTo(0, groundY);
+  ctx.fill();
+
+  // Ground
+  ctx.fillStyle = "#65b84d";
+  ctx.fillRect(0, groundY, W, H - groundY);
+
+  ctx.fillStyle = "#438a38";
+  ctx.fillRect(0, groundY, W, 8);
+
+  // Little grass strokes
+  ctx.strokeStyle = "#397d32";
+  ctx.lineWidth = 2;
+  for (let x = 0; x < W; x += 24) {
+    ctx.beginPath();
+    ctx.moveTo(x, groundY + 13);
+    ctx.lineTo(x + 3, groundY + 7);
+    ctx.stroke();
+  }
+}
+
+function drawCloud(x, y, scale) {
+  ctx.fillStyle = "rgba(255,255,255,0.85)";
+  ctx.beginPath();
+  ctx.arc(x, y, 20 * scale, 0, Math.PI * 2);
+  ctx.arc(x + 22 * scale, y - 10 * scale, 25 * scale, 0, Math.PI * 2);
+  ctx.arc(x + 48 * scale, y, 18 * scale, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawSlingshot() {
+  // Back post
+  ctx.strokeStyle = "#75431f";
+  ctx.lineWidth = 12;
+  ctx.lineCap = "round";
+
+  ctx.beginPath();
+  ctx.moveTo(sling.x - 9, groundY);
+  ctx.lineTo(sling.x, sling.y - 22);
+  ctx.stroke();
+
+  // Front post
+  ctx.beginPath();
+  ctx.moveTo(sling.x + 13, groundY);
+  ctx.lineTo(sling.x + 10, sling.y - 24);
+  ctx.stroke();
+
+  if (rabbit && !rabbit.launched) {
+    ctx.strokeStyle = "#57311b";
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.moveTo(sling.x, sling.y - 8);
+    ctx.lineTo(rabbit.x, rabbit.y);
+    ctx.lineTo(sling.x + 10, sling.y - 8);
+    ctx.stroke();
+  }
+}
+
+function drawRabbit() {
+  if (!rabbit || !rabbit.alive) return;
+
+  ctx.save();
+  ctx.translate(rabbit.x, rabbit.y);
+  ctx.rotate(rabbit.angle || 0);
+
+  // Ears
+  ctx.fillStyle = "#e9e9f3";
+  ctx.beginPath();
+  ctx.ellipse(-7, -23, 6, 16, -0.2, 0, Math.PI * 2);
+  ctx.ellipse(7, -23, 6, 16, 0.2, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#f3a9bb";
+  ctx.beginPath();
+  ctx.ellipse(-7, -24, 2.5, 10, -0.2, 0, Math.PI * 2);
+  ctx.ellipse(7, -24, 2.5, 10, 0.2, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Body
+  ctx.fillStyle = "#f4f4f7";
+  ctx.beginPath();
+  ctx.arc(0, 0, rabbit.r, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = "#9ba5b5";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // Eyes
+  ctx.fillStyle = "#222";
+  ctx.beginPath();
+  ctx.arc(6, -4, 2.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Nose
+  ctx.fillStyle = "#ee819b";
+  ctx.beginPath();
+  ctx.arc(14, 3, 3, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Cheek
+  ctx.fillStyle = "#f7bdcb";
+  ctx.beginPath();
+  ctx.arc(8, 5, 4, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
+function drawCarrot(c) {
+  ctx.save();
+  ctx.translate(c.x + c.w / 2, c.y + c.h / 2);
+  ctx.rotate(c.angle);
+
+  // Green leaves
+  ctx.fillStyle = "#258d3a";
+  ctx.beginPath();
+  ctx.ellipse(-5, -17, 5, 10, -0.6, 0, Math.PI * 2);
+  ctx.ellipse(2, -19, 5, 11, 0.2, 0, Math.PI * 2);
+  ctx.ellipse(7, -15, 4, 8, 0.8, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Carrot body
+  ctx.fillStyle = c.color;
+  ctx.beginPath();
+  ctx.moveTo(-12, -12);
+  ctx.lineTo(12, -12);
+  ctx.lineTo(0, 19);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.strokeStyle = "#d8751e";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // Carrot stripes
+  ctx.strokeStyle = "#d8751e";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(-7, -3);
+  ctx.lineTo(4, 0);
+  ctx.moveTo(-4, 6);
+  ctx.lineTo(2, 8);
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+function drawHawk(h) {
+  ctx.save();
+  ctx.translate(h.x, h.y);
+
+  const flap = Math.sin(h.wingPhase) * 0.55;
+
+  // Wings
+  ctx.fillStyle = "#65483c";
+  ctx.beginPath();
+  ctx.moveTo(-7, 0);
+  ctx.quadraticCurveTo(-25, -22 - flap * 15, -40, -12 - flap * 10);
+  ctx.quadraticCurveTo(-28, 7, -8, 10);
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.moveTo(7, 0);
+  ctx.quadraticCurveTo(25, -22 - flap * 15, 40, -12 - flap * 10);
+  ctx.quadraticCurveTo(28, 7, 8, 10);
+  ctx.fill();
+
+  // Body
+  ctx.fillStyle = "#8a6250";
+  ctx.beginPath();
+  ctx.ellipse(0, 2, 18, 12, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Head
+  ctx.fillStyle = "#b68b68";
+  ctx.beginPath();
+  ctx.arc(13, -6, 10, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Beak
+  ctx.fillStyle = "#f5c244";
+  ctx.beginPath();
+  ctx.moveTo(21, -5);
+  ctx.lineTo(32, -1);
+  ctx.lineTo(21, 2);
+  ctx.closePath();
+  ctx.fill();
+
+  // Eye
+  ctx.fillStyle = "#fff";
+  ctx.beginPath();
+  ctx.arc(16, -8, 3, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#222";
+  ctx.beginPath();
+  ctx.arc(17, -8, 1.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
+function drawHUD() {
+  ctx.fillStyle = "rgba(16,32,56,0.8)";
+  ctx.fillRect(15, 14, 260, 75);
+
+  ctx.fillStyle = "#fff";
+  ctx.font = "bold 20px Arial";
+  ctx.fillText("Level " + level + " / 3", 28, 42);
+
+  ctx.font = "16px Arial";
+  ctx.fillText("Score: " + score, 28, 65);
+  ctx.fillText("Rabbits left: " + rabbitsLeft, 28, 84);
+}
+
+function drawAimLine() {
+  if (!dragging || !rabbit) return;
+
+  const dx = sling.x - rabbit.x;
+  const dy = sling.y - rabbit.y;
+  const speedX = dx * 0.19;
+  const speedY = dy * 0.19;
+
+  ctx.fillStyle = "#ffffff";
+
+  for (let i = 1; i <= 12; i++) {
+    const t = i * 3;
+    const x = rabbit.x + speedX * t;
+    const y = rabbit.y + speedY * t + 0.5 * gravity * t * t;
+
+    if (x < 0 || x > W || y > groundY) break;
+
+    ctx.beginPath();
+    ctx.arc(x, y, 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawParticles() {
+  for (const p of particles) {
+    ctx.globalAlpha = Math.max(0, Math.min(1, p.life / 30));
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.globalAlpha = 1;
+}
+
+function draw() {
+  drawBackground();
+  drawSlingshot();
+
+  for (const c of carrots) {
+    if (c.alive) drawCarrot(c);
+  }
+
+  for (const h of hawks) {
+    if (h.alive) drawHawk(h);
+  }
+
+  drawAimLine();
+  drawRabbit();
+  drawParticles();
+  drawHUD();
+}
+
+function loop(time) {
+  const dt = lastTime ? Math.min(time - lastTime, 40) : 16.67;
+  lastTime = time;
+
+  update(dt);
+  draw();
+
+  requestAnimationFrame(loop);
+}
+
+startLevel();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
